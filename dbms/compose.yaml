@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:18
+    env_file:
+      - .env
+    environment: # Override environment variables from .env file
+      - POSTGRES_INITDB_ARGS=--auth=scram-sha-256
+    volumes:
+      - pgdata:/var/lib/postgresql:Z
+      - ./initdb.d:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+  adminer:
+    image: adminer:latest
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+volumes:
+  pgdata:
