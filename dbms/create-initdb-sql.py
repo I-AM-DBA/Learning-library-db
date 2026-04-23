@@ -274,7 +274,7 @@ class SqlGzWriter:
 
 
 class Main:
-    _BOOKS_SQL_FILENAME = "02-books.sql.gz"
+    _BOOKS_SQL_FILENAME = "10-books.sql.gz"
 
     @staticmethod
     def run():

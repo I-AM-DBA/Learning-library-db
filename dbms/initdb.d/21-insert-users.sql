@@ -1,4 +1,4 @@
-\c library
+\c library;
 
 INSERT INTO users (user_id, email, password_hash, name)
 VALUES
