@@ -1,1 +1,3 @@
 .env
+
+/dbms/initdb.d/*.sql.gz

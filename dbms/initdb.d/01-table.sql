@@ -1,3 +1,5 @@
+CREATE DATABASE library;
+
 \c library
 
 -- create books table
@@ -18,30 +20,6 @@ CREATE TABLE books (
     original_title      varchar(255)    NULL,
     call_no             varchar(63)     NULL
 );
-
--- insert data into books table
-INSERT INTO books (
-    title,
-    publisher,
-    location_name,
-    isbn,
-    author,
-    created_date,
-    published_year,
-    call_no
-)
-SELECT
-    REGEXP_REPLACE(title, '''{2,}', '''', 'g'),
-    publer,
-    loca_name,
-    isbn,
-    author,
-    create_date::date,
-    publer_year::smallint,
-    call_no
-FROM raw_books
-WHERE length(title) <= 255 AND
-    publer_year ~ '^[0-9]{4}$';
 
 -- create users table
 CREATE TYPE users_type AS ENUM ('정회원', '준회원');
