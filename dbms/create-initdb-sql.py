@@ -265,28 +265,81 @@ class SqlGzWriter:
         self._file.close()
         self._path.chmod(0o644)
 
-    def write(self, line: str):
-        self._file.write(line + "\n")
+    def write_line(self, line: str):
+        self._file.write(line)
+        self._file.write("\n")
 
-    def write_row(self, *columns: str):
+    def write_row(self, *columns: str | None):
         escaped_columns = [self._escape_data(col) for col in columns]
-        self.write("\t".join(escaped_columns))
+        self.write_line("\t".join(escaped_columns))
+
+
+class SqlPack:
+    _AUTHORS_SQL_FILENAME = "10-authors.sql.gz"
+    _BOOK_AUTHOR_REFS_SQL_FILENAME = "13-book-author-refs.sql.gz"
+    _BOOKS_SQL_FILENAME = "12-books.sql.gz"
+    _PUBLISHERS_SQL_FILENAME = "11-publishers.sql.gz"
+
+    def __init__(self) -> None:
+        self.authors = SqlGzWriter(SqlPack._AUTHORS_SQL_FILENAME)
+        self.book_author_refs = SqlGzWriter(SqlPack._BOOK_AUTHOR_REFS_SQL_FILENAME)
+        self.books = SqlGzWriter(SqlPack._BOOKS_SQL_FILENAME)
+        self.publishers = SqlGzWriter(SqlPack._PUBLISHERS_SQL_FILENAME)
+
+    def __enter__(self):
+        self.authors.__enter__()
+        self.book_author_refs.__enter__()
+        self.books.__enter__()
+        self.publishers.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.authors.__exit__(exc_type, exc_value, traceback)
+        self.book_author_refs.__exit__(exc_type, exc_value, traceback)
+        self.books.__exit__(exc_type, exc_value, traceback)
+        self.publishers.__exit__(exc_type, exc_value, traceback)
 
 
 class Main:
-    _BOOKS_SQL_FILENAME = "10-books.sql.gz"
+    @staticmethod
+    def call_no_to_sub_category(call_no: str) -> str | None:
+        if not call_no:
+            return None
+
+        try:
+            n = int(call_no[:3])
+            return str((n // 10) + 1)
+        except ValueError:
+            return None
 
     @staticmethod
     def run():
-        with SqlGzWriter(Main._BOOKS_SQL_FILENAME) as books:
-            books.write("\\c library")
+        with SqlPack() as pack:
+            pack.authors.write_line("\\c library")
+            pack.authors.write_line(
+                "COPY authors (author_name) FROM STDIN WITH (NULL ' ');"
+            )
 
-            books.write(
-                "COPY books (title, publisher, location_name, isbn, author, created_date, published_year, call_no) FROM STDIN WITH (NULL ' ');"
+            publishers_map: dict[str, str] = {}
+            pack.publishers.write_line("\\c library")
+            pack.publishers.write_line(
+                "COPY publishers (publisher_name) FROM STDIN WITH (NULL ' ');"
+            )
+
+            pack.books.write_line("\\c library")
+            pack.books.write_line(
+                "COPY books (title, publisher_id, location_name, sub_category_id, isbn, created_date, published_year, call_no) FROM STDIN WITH (NULL ' ');"
+            )
+
+            pack.book_author_refs.write_line("\\c library")
+            pack.book_author_refs.write_line(
+                "COPY book_author_refs (book_id, author_id) FROM STDIN WITH (NULL ' ');"
             )
 
             print("Preparing data...")
             total_lines = 0
+            book_count = 0
+            author_count = 0
             for progress in LibraryArchive().readRecords():
                 title = progress["record"].title
                 if len(title) > 255:
@@ -304,17 +357,42 @@ class Main:
                 title = title.strip()
                 title = re.sub(r"'{2,}", "'", title)
 
-                books.write_row(
+                # process publishers
+                publisher_id = None
+                publisher_name = progress["record"].publer
+                if publisher_name is not None and publisher_name.strip():
+                    if publisher_name in publishers_map:
+                        publisher_id = publishers_map[publisher_name]
+                    else:
+                        publisher_id = str(len(publishers_map) + 1)
+                        publishers_map[publisher_name] = publisher_id
+                        pack.publishers.write_row(publisher_name)
+
+                # get sub category from call_no
+                call_no = progress["record"].call_no
+                sub_category = Main.call_no_to_sub_category(call_no)
+
+                # write books
+                pack.books.write_row(
                     title,
-                    progress["record"].publer,
+                    publisher_id,
                     progress["record"].loca_name,
+                    sub_category,
                     progress["record"].isbn,
-                    progress["record"].author,
                     progress["record"].create_date,
                     published_year,
                     progress["record"].call_no,
                 )
+                book_count += 1
 
+                # write authors and book-author references
+                authors = progress["record"].author
+                if authors is not None and authors.strip():
+                    pack.authors.write_row(authors)
+                    author_count += 1
+                    pack.book_author_refs.write_row(str(book_count), str(author_count))
+
+                # print progress
                 current_line = progress["current_line"]
                 if current_line % 1000 == 0:
                     total_lines = progress["total_lines"]
@@ -325,7 +403,10 @@ class Main:
 
             print(f"Progress: {total_lines} / {total_lines} (100.00%)")
 
-            books.write("\\.")
+            pack.authors.write_line("\\.")
+            pack.book_author_refs.write_line("\\.")
+            pack.books.write_line("\\.")
+            pack.publishers.write_line("\\.")
 
 
 if __name__ == "__main__":
