@@ -44,7 +44,9 @@ CREATE TABLE books (
     status              books_status    NOT NULL DEFAULT 'A',
     is_damaged          boolean         NOT NULL DEFAULT FALSE,
     original_title      varchar(255)    NULL,
-    call_no             varchar(63)     NULL
+    call_no             varchar(63)     NULL,
+    CONSTRAINT fk_books_publisher FOREIGN KEY (publisher_id) REFERENCES publishers(publisher_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_books_sub_category FOREIGN KEY (sub_category_id) REFERENCES sub_categories(sub_category_id) ON DELETE SET NULL
 );
 
 -- create book_author_refs table
@@ -81,7 +83,8 @@ CREATE TABLE users_info (
 CREATE TABLE users_secret (
     user_id         integer         PRIMARY KEY,
     email           varchar(255)    NOT NULL,
-    password_hash   char(80)        NULL
+    password_hash   char(80)        NULL,
+    CONSTRAINT fk_users_secret_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
 -- create loans table
