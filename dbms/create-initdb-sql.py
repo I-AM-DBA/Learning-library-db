@@ -347,8 +347,33 @@ class AuthorsSql(BaseSqlWriter):
             compress=compress,
         )
 
+        self._author_count = 0
+
+    def write_author(self, name: str | None) -> str | None:
+        """
+        저자 이름을 입력받아 SQL 파일에 작성 및 저자 기본키 반환
+        """
+        if name is None or not name.strip():
+            return None
+
+        self.write_row(name)
+        self._author_count += 1
+
+        return str(self._author_count)
+
 
 class BooksSql(BaseSqlWriter):
+    @staticmethod
+    def call_no_to_sub_category(call_no: str) -> str | None:
+        if not call_no:
+            return None
+
+        try:
+            n = int(call_no[:3])
+            return str((n // 10) + 1)
+        except ValueError:
+            return None
+
     def __init__(self, *, compress: bool = False):
         super().__init__(
             "12-books",
@@ -369,6 +394,43 @@ class BooksSql(BaseSqlWriter):
             compress=compress,
         )
 
+        self._book_count = 0
+
+    def write_book(
+        self,
+        title,
+        publisher_id,
+        location_name,
+        isbn,
+        created_date,
+        published_year,
+        call_no,
+    ) -> str:
+        """
+        도서를 입력받아 SQL 파일에 작성 및 도서 기본키 반환
+        """
+        # trim title and replace multiple single quotes with one
+        title = title.strip()
+        title = re.sub(r"'{2,}", "'", title)
+
+        # get sub category from call_no
+        sub_category_id = BooksSql.call_no_to_sub_category(call_no)
+
+        self.write_row(
+            title,
+            publisher_id,
+            location_name,
+            sub_category_id,
+            isbn,
+            created_date,
+            published_year,
+            call_no,
+        )
+
+        self._book_count += 1
+
+        return str(self._book_count)
+
 
 class BookAuthorRefsSql(BaseSqlWriter):
     def __init__(self, *, compress: bool = False):
@@ -381,6 +443,12 @@ class BookAuthorRefsSql(BaseSqlWriter):
             },
             compress=compress,
         )
+
+    def write_ref(self, book_id: str, author_id: str):
+        """
+        도서-저자 참조를 입력받아 SQL 파일에 작성
+        """
+        self.write_row(book_id, author_id)
 
 
 class PublishersSql(BaseSqlWriter):
@@ -395,19 +463,28 @@ class PublishersSql(BaseSqlWriter):
             compress=compress,
         )
 
+        self.__publisher_map: dict[str, int] = {}
+
+    def write_publisher(self, name: str | None) -> str | None:
+        """
+        출판사 이름을 입력받아 SQL 파일에 작성 및 출판사 기본키 반환
+        """
+        if name is None or not name.strip():
+            return None
+
+        id = self.__publisher_map.get(name)
+        if id is not None:
+            return str(id)
+
+        self.write_row(name)
+
+        id = len(self.__publisher_map) + 1
+        self.__publisher_map[name] = id
+
+        return str(id)
+
 
 class Main:
-    @staticmethod
-    def call_no_to_sub_category(call_no: str) -> str | None:
-        if not call_no:
-            return None
-
-        try:
-            n = int(call_no[:3])
-            return str((n // 10) + 1)
-        except ValueError:
-            return None
-
     @staticmethod
     def run():
         with (
@@ -416,13 +493,11 @@ class Main:
             BooksSql(compress=True) as books_sql,
             PublishersSql(compress=True) as publishers_sql,
         ):
-            publishers_map: dict[str, str] = {}
-
             print("Preparing data...")
+
             total_lines = 0
-            book_count = 0
-            author_count = 0
             for progress in LibraryArchive().readRecords():
+                # filtering record
                 title = progress["record"].title
                 if len(title) > 255:
                     continue
@@ -435,44 +510,26 @@ class Main:
                 if not published_year or not published_year.isdigit():
                     continue
 
-                # trim title and replace multiple single quotes with one
-                title = title.strip()
-                title = re.sub(r"'{2,}", "'", title)
+                # write publisher
+                publisher_id = publishers_sql.write_publisher(progress["record"].publer)
 
-                # process publishers
-                publisher_id = None
-                publisher_name = progress["record"].publer
-                if publisher_name is not None and publisher_name.strip():
-                    if publisher_name in publishers_map:
-                        publisher_id = publishers_map[publisher_name]
-                    else:
-                        publisher_id = str(len(publishers_map) + 1)
-                        publishers_map[publisher_name] = publisher_id
-                        publishers_sql.write_row(publisher_name)
-
-                # get sub category from call_no
-                call_no = progress["record"].call_no
-                sub_category = Main.call_no_to_sub_category(call_no)
-
-                # write books
-                books_sql.write_row(
+                # write book
+                book_id = books_sql.write_book(
                     title,
                     publisher_id,
                     progress["record"].loca_name,
-                    sub_category,
                     progress["record"].isbn,
                     progress["record"].create_date,
                     published_year,
                     progress["record"].call_no,
                 )
-                book_count += 1
 
-                # write authors and book-author references
-                authors = progress["record"].author
-                if authors is not None and authors.strip():
-                    authors_sql.write_row(authors)
-                    author_count += 1
-                    book_author_refs_sql.write_row(str(book_count), str(author_count))
+                # write author
+                author_id = authors_sql.write_author(progress["record"].author)
+
+                # write book-author references
+                if author_id is not None:
+                    book_author_refs_sql.write_ref(book_id, author_id)
 
                 # print progress
                 current_line = progress["current_line"]
