@@ -234,8 +234,55 @@ class LibraryArchive:
         current_line: int
 
 
-class SqlGzWriter:
-    _BASE_DIRECTORY = Path("./initdb.d")
+class SqlWriter:
+    def __init__(self, path: Path, *, compress: bool = False):
+        self.__compress: bool = compress
+
+        suffix: str = ".sql.gz" if self.__compress else ".sql"
+        self.__path: Path = path.with_suffix(suffix)
+
+        self.__file: TextIOWrapper | None = None
+
+    def __enter__(self):
+        self.open()
+
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+    def open(self):
+        if self.__file is not None:
+            raise RuntimeError("File is already open.")
+
+        self.__path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+
+        if self.__compress:
+            self.__file = gzip.open(self.__path, "wt", encoding="utf-8")
+        else:
+            self.__file = open(self.__path, "w", encoding="utf-8")
+
+    def close(self):
+        if self.__file is None:
+            raise RuntimeError("File is not open.")
+
+        self.__file.close()
+        self.__path.chmod(0o644)
+
+    def write(self, data: str):
+        if self.__file is None:
+            raise RuntimeError("File is not open.")
+
+        self.__file.write(data)
+
+    def write_line(self, line: str):
+        self.write(line)
+        self.write("\n")
+
+
+class BaseSqlWriter(SqlWriter):
+    _BASE_DIRECTORY = "./initdb.d"
+
     _ESCAPE_TABLE = str.maketrans(
         {
             "\\": "\\\\",
@@ -250,54 +297,103 @@ class SqlGzWriter:
         if data is None:
             return " "
 
-        return data.strip().translate(SqlGzWriter._ESCAPE_TABLE)
+        return data.strip().translate(BaseSqlWriter._ESCAPE_TABLE)
 
-    def __init__(self, filename: str):
-        self._path = self._BASE_DIRECTORY / filename
+    def __init__(
+        self,
+        filename: str,
+        schema: "BaseSqlWriter.Schema",
+        *,
+        compress: bool = False,
+    ):
+        super().__init__(Path(self._BASE_DIRECTORY) / filename, compress=compress)
 
-    def __enter__(self):
-        self._path.parent.mkdir(exist_ok=True)
-        self._file = gzip.open(self._path, "wt", encoding="utf-8")
+        self._DATABASE_NAME = schema["database_name"]
+        self._TABLE_NAME = schema["table_name"]
+        self._ATTRIBUTES = schema["attributes"]
 
-        return self
+    def open(self):
+        super().open()
 
-    def __exit__(self, exc_type, exc_value, traceback):
-        self._file.close()
-        self._path.chmod(0o644)
+        self.write_line(f"\\c {self._DATABASE_NAME}")
+        self.write_line(
+            f"COPY {self._TABLE_NAME} ({', '.join(self._ATTRIBUTES)}) FROM STDIN WITH (NULL ' ');"
+        )
 
-    def write_line(self, line: str):
-        self._file.write(line)
-        self._file.write("\n")
+    def close(self):
+        self.write_line("\\.")
+
+        super().close()
 
     def write_row(self, *columns: str | None):
         escaped_columns = [self._escape_data(col) for col in columns]
         self.write_line("\t".join(escaped_columns))
 
+    class Schema(TypedDict):
+        database_name: str
+        table_name: str
+        attributes: list[str]
 
-class SqlPack:
-    _AUTHORS_SQL_FILENAME = "10-authors.sql.gz"
-    _BOOK_AUTHOR_REFS_SQL_FILENAME = "13-book-author-refs.sql.gz"
-    _BOOKS_SQL_FILENAME = "12-books.sql.gz"
-    _PUBLISHERS_SQL_FILENAME = "11-publishers.sql.gz"
 
-    def __init__(self) -> None:
-        self.authors = SqlGzWriter(SqlPack._AUTHORS_SQL_FILENAME)
-        self.book_author_refs = SqlGzWriter(SqlPack._BOOK_AUTHOR_REFS_SQL_FILENAME)
-        self.books = SqlGzWriter(SqlPack._BOOKS_SQL_FILENAME)
-        self.publishers = SqlGzWriter(SqlPack._PUBLISHERS_SQL_FILENAME)
+class AuthorsSql(BaseSqlWriter):
+    def __init__(self, *, compress: bool = False):
+        super().__init__(
+            "10-authors",
+            {
+                "database_name": "library",
+                "table_name": "authors",
+                "attributes": ["author_name"],
+            },
+            compress=compress,
+        )
 
-    def __enter__(self):
-        self.authors.__enter__()
-        self.book_author_refs.__enter__()
-        self.books.__enter__()
-        self.publishers.__enter__()
-        return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.authors.__exit__(exc_type, exc_value, traceback)
-        self.book_author_refs.__exit__(exc_type, exc_value, traceback)
-        self.books.__exit__(exc_type, exc_value, traceback)
-        self.publishers.__exit__(exc_type, exc_value, traceback)
+class BooksSql(BaseSqlWriter):
+    def __init__(self, *, compress: bool = False):
+        super().__init__(
+            "12-books",
+            {
+                "database_name": "library",
+                "table_name": "books",
+                "attributes": [
+                    "title",
+                    "publisher_id",
+                    "location_name",
+                    "sub_category_id",
+                    "isbn",
+                    "created_date",
+                    "published_year",
+                    "call_no",
+                ],
+            },
+            compress=compress,
+        )
+
+
+class BookAuthorRefsSql(BaseSqlWriter):
+    def __init__(self, *, compress: bool = False):
+        super().__init__(
+            "13-book-author-refs",
+            {
+                "database_name": "library",
+                "table_name": "book_author_refs",
+                "attributes": ["book_id", "author_id"],
+            },
+            compress=compress,
+        )
+
+
+class PublishersSql(BaseSqlWriter):
+    def __init__(self, *, compress: bool = False):
+        super().__init__(
+            "11-publishers",
+            {
+                "database_name": "library",
+                "table_name": "publishers",
+                "attributes": ["publisher_name"],
+            },
+            compress=compress,
+        )
 
 
 class Main:
@@ -314,27 +410,13 @@ class Main:
 
     @staticmethod
     def run():
-        with SqlPack() as pack:
-            pack.authors.write_line("\\c library")
-            pack.authors.write_line(
-                "COPY authors (author_name) FROM STDIN WITH (NULL ' ');"
-            )
-
+        with (
+            AuthorsSql(compress=True) as authors_sql,
+            BookAuthorRefsSql(compress=True) as book_author_refs_sql,
+            BooksSql(compress=True) as books_sql,
+            PublishersSql(compress=True) as publishers_sql,
+        ):
             publishers_map: dict[str, str] = {}
-            pack.publishers.write_line("\\c library")
-            pack.publishers.write_line(
-                "COPY publishers (publisher_name) FROM STDIN WITH (NULL ' ');"
-            )
-
-            pack.books.write_line("\\c library")
-            pack.books.write_line(
-                "COPY books (title, publisher_id, location_name, sub_category_id, isbn, created_date, published_year, call_no) FROM STDIN WITH (NULL ' ');"
-            )
-
-            pack.book_author_refs.write_line("\\c library")
-            pack.book_author_refs.write_line(
-                "COPY book_author_refs (book_id, author_id) FROM STDIN WITH (NULL ' ');"
-            )
 
             print("Preparing data...")
             total_lines = 0
@@ -366,14 +448,14 @@ class Main:
                     else:
                         publisher_id = str(len(publishers_map) + 1)
                         publishers_map[publisher_name] = publisher_id
-                        pack.publishers.write_row(publisher_name)
+                        publishers_sql.write_row(publisher_name)
 
                 # get sub category from call_no
                 call_no = progress["record"].call_no
                 sub_category = Main.call_no_to_sub_category(call_no)
 
                 # write books
-                pack.books.write_row(
+                books_sql.write_row(
                     title,
                     publisher_id,
                     progress["record"].loca_name,
@@ -388,9 +470,9 @@ class Main:
                 # write authors and book-author references
                 authors = progress["record"].author
                 if authors is not None and authors.strip():
-                    pack.authors.write_row(authors)
+                    authors_sql.write_row(authors)
                     author_count += 1
-                    pack.book_author_refs.write_row(str(book_count), str(author_count))
+                    book_author_refs_sql.write_row(str(book_count), str(author_count))
 
                 # print progress
                 current_line = progress["current_line"]
@@ -402,11 +484,6 @@ class Main:
                     )
 
             print(f"Progress: {total_lines} / {total_lines} (100.00%)")
-
-            pack.authors.write_line("\\.")
-            pack.book_author_refs.write_line("\\.")
-            pack.books.write_line("\\.")
-            pack.publishers.write_line("\\.")
 
 
 if __name__ == "__main__":
