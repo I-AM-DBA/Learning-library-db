@@ -338,7 +338,7 @@ class BaseSqlWriter(SqlWriter):
 class AuthorsSql(BaseSqlWriter):
     def __init__(self, *, compress: bool = False):
         super().__init__(
-            "10-authors",
+            "20-authors",
             {
                 "database_name": "library",
                 "table_name": "authors",
@@ -399,7 +399,7 @@ class BooksSql(BaseSqlWriter):
 
     def __init__(self, *, compress: bool = False):
         super().__init__(
-            "12-books",
+            "22-books",
             {
                 "database_name": "library",
                 "table_name": "books",
@@ -451,7 +451,7 @@ class BooksSql(BaseSqlWriter):
 class BookAuthorRefsSql(BaseSqlWriter):
     def __init__(self, *, compress: bool = False):
         super().__init__(
-            "13-book-author-refs",
+            "23-book-author-refs",
             {
                 "database_name": "library",
                 "table_name": "book_author_refs",
@@ -470,7 +470,7 @@ class BookAuthorRefsSql(BaseSqlWriter):
 class PublishersSql(BaseSqlWriter):
     def __init__(self, *, compress: bool = False):
         super().__init__(
-            "11-publishers",
+            "21-publishers",
             {
                 "database_name": "library",
                 "table_name": "publishers",
