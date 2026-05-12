@@ -527,6 +527,7 @@ class Main:
                     continue
 
                 # write author
+                # Note: 공공데이터의 데이터 정합성 문제로 도메인 값 분리 과정 없이 원시 데이터를 그대로 입력함.
                 author_id = authors_sql.write_author(progress["record"].author)
 
                 # write publisher
